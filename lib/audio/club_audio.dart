@@ -175,6 +175,27 @@ class ClubSynth {
         _at(_tone(2093, 0.25, decay: 12, harmonic: 0.2), 0.12),
       ]);
 
+  /// Chrono expired: bright stopwatch bell, three strikes.
+  static List<double> timeUp() {
+    final parts = <List<double>>[];
+    for (var k = 0; k < 3; k++) {
+      parts.add(_at(
+          _mix([
+            _tone(2093, 0.35, decay: 9, harmonic: 0.4),
+            _tone(2637, 0.3, decay: 10, harmonic: 0.3),
+          ]),
+          k * 0.28));
+    }
+    return _mix(parts);
+  }
+
+  /// Pass-and-play handoff: soft brass sweep so the device hand-over
+  /// has an audible cue.
+  static List<double> handoff() => _mix([
+        _at(_tone(784, 0.22, decay: 8, harmonic: 0.2), 0),
+        _at(_tone(1046, 0.28, decay: 8, harmonic: 0.2), 0.14),
+      ]);
+
   // ---------- music loops ----------
 
   static List<double> _pad(List<double> freqs, double secs) {
@@ -257,9 +278,21 @@ class ClubSynth {
   }
 }
 
-enum ClubSound { click, place, flip, invalid, gameStart, win, lose, tick, pass, hint }
+enum ClubSound { click, place, flip, invalid, gameStart, win, lose, tick, pass, hint, timeUp, handoff }
 
 /// Audio service: one looping music player + a small SFX pool.
+///
+/// Reliability design (every call is safe to repeat and safe to overlap):
+/// - Music clips are synthesized ONCE and cached; starting music never blocks
+///   the UI thread after the first build.
+/// - A [_musicGen] generation counter serializes track changes: every
+///   start/stop bumps the generation, in-flight work from an older request
+///   aborts, and the LATEST request always wins. Overlapping calls (menu in/out,
+///   pause/resume, toggles) can never swallow a start or leave the player
+///   half-started — music is app-scoped and never silently dies.
+/// - Lifecycle uses pause()/resume() so an interruption (call, backgrounding)
+///   resumes exactly where it left off instead of restarting or dying.
+/// - Every public method catches player errors; audio can never crash the app.
 class ClubAudio {
   final AudioPlayer _music = AudioPlayer();
   final List<AudioPlayer> _pool = List.generate(4, (_) => AudioPlayer());
@@ -271,20 +304,62 @@ class ClubAudio {
   bool musicOn = true;
   bool sfxOn = true;
   double volume = 0.7;
+
+  // Music state machine. [_musicGen] is bumped by every start/stop request;
+  // async work checks it still owns the latest generation before touching
+  // the player, so overlapping requests can never desync the music.
+  int _musicGen = 0;
+  bool _musicBusy = false;
   bool _musicIsGame = false;
+  bool _pausedByLifecycle = false;
+  bool _disposed = false;
 
   Future<void> init({required bool musicOn, required bool sfxOn, required double volume}) async {
     this.musicOn = musicOn;
     this.sfxOn = sfxOn;
     this.volume = volume;
-    await _music.setVolume(volume * 0.9);
-    await _music.setReleaseMode(ReleaseMode.loop);
+    try {
+      await _music.setVolume(volume * 0.9);
+      await _music.setReleaseMode(ReleaseMode.loop);
+    } catch (_) {}
+  }
+
+  /// Pre-build music clips off the critical path. Safe to call any time —
+  /// typically from the splash screen while the loading line animates.
+  Future<void> prewarm() async {
+    if (_disposed) return;
+    await Future(() {});
+    try {
+      _menuMusic ??= ClubSynth.wav(ClubSynth.menuMusic());
+      _gameMusic ??= ClubSynth.wav(ClubSynth.gameMusic());
+    } catch (_) {}
   }
 
   Future<void> applySettings() async {
-    await _music.setVolume(musicOn ? volume * 0.9 : 0);
-    for (final p in _pool) {
-      await p.setVolume(sfxOn ? volume : 0);
+    try {
+      await _music.setVolume(musicOn && !_pausedByLifecycle ? volume * 0.9 : 0);
+      for (final p in _pool) {
+        await p.setVolume(sfxOn ? volume : 0);
+      }
+    } catch (_) {}
+  }
+
+  /// Serializes music ops: latest request wins, older in-flight work aborts.
+  Future<void> _runMusic(Future<void> Function() op) async {
+    final gen = ++_musicGen;
+    var spins = 0;
+    while (_musicBusy && gen == _musicGen && spins < 100) {
+      await Future.delayed(const Duration(milliseconds: 25));
+      spins++;
+    }
+    if (gen != _musicGen || _disposed) return;
+    _musicBusy = true;
+    try {
+      if (gen == _musicGen) await op();
+    } catch (_) {
+      // Audio is best-effort; never break gameplay.
+    } finally {
+      _musicBusy = false;
     }
   }
 
@@ -300,12 +375,14 @@ class ClubAudio {
           ClubSound.tick => ClubSynth.tick(),
           ClubSound.pass => ClubSynth.pass(),
           ClubSound.hint => ClubSynth.hint(),
+          ClubSound.timeUp => ClubSynth.timeUp(),
+          ClubSound.handoff => ClubSynth.handoff(),
         };
         return ClubSynth.wav(samples);
       });
 
   Future<void> play(ClubSound s) async {
-    if (!sfxOn) return;
+    if (!sfxOn || _disposed) return;
     try {
       final p = _pool[_poolIdx];
       _poolIdx = (_poolIdx + 1) % _pool.length;
@@ -316,40 +393,74 @@ class ClubAudio {
     }
   }
 
-  Future<void> startMenuMusic() async {
-    if (_musicIsGame == false && _menuMusic != null) return;
-    _menuMusic ??= ClubSynth.wav(ClubSynth.menuMusic());
-    _musicIsGame = false;
+  Future<void> startMenuMusic() => _runMusic(() async {
+        if (_musicIsGame == false && _menuMusic != null) {
+          // Already on the menu bed and the player is looping — just make
+          // sure lifecycle pause didn't leave it muted.
+          if (!_pausedByLifecycle) {
+            await _music.setVolume(musicOn ? volume * 0.9 : 0);
+          }
+          return;
+        }
+        _menuMusic ??= ClubSynth.wav(ClubSynth.menuMusic());
+        _musicIsGame = false;
+        _pausedByLifecycle = false;
+        await _music.stop();
+        await _music.setVolume(musicOn ? volume * 0.9 : 0);
+        await _music.play(BytesSource(_menuMusic!));
+      });
+
+  Future<void> startGameMusic() => _runMusic(() async {
+        if (_musicIsGame && _gameMusic != null) {
+          if (!_pausedByLifecycle) {
+            await _music.setVolume(musicOn ? volume * 0.9 : 0);
+          }
+          return;
+        }
+        _gameMusic ??= ClubSynth.wav(ClubSynth.gameMusic());
+        _musicIsGame = true;
+        _pausedByLifecycle = false;
+        await _music.stop();
+        await _music.setVolume(musicOn ? volume * 0.9 : 0);
+        await _music.play(BytesSource(_gameMusic!));
+      });
+
+  /// Lifecycle: an interruption (call, backgrounding) pauses the music bed
+  /// so it resumes exactly where it left off.
+  Future<void> pauseMusic() async {
+    if (_disposed) return;
+    _pausedByLifecycle = true;
     try {
-      await _music.stop();
-      await _music.setVolume(musicOn ? volume * 0.9 : 0);
-      await _music.play(BytesSource(_menuMusic!));
+      await _music.pause();
     } catch (_) {}
   }
 
-  Future<void> startGameMusic() async {
-    if (_musicIsGame && _gameMusic != null) return;
-    _gameMusic ??= ClubSynth.wav(ClubSynth.gameMusic());
-    _musicIsGame = true;
+  /// Lifecycle resume: picks the bed back up mid-loop.
+  Future<void> resumeMusic() async {
+    if (_disposed) return;
+    _pausedByLifecycle = false;
     try {
-      await _music.stop();
-      await _music.setVolume(musicOn ? volume * 0.9 : 0);
-      await _music.play(BytesSource(_gameMusic!));
+      if (musicOn) {
+        await _music.setVolume(volume * 0.9);
+        await _music.resume();
+      }
     } catch (_) {}
   }
 
-  Future<void> stopMusic() async {
-    try {
-      await _music.stop();
-    } catch (_) {}
-    _menuMusic = null;
-    _gameMusic = null;
-  }
+  Future<void> stopMusic() => _runMusic(() async {
+        await _music.stop();
+        _menuMusic = null;
+        _gameMusic = null;
+      });
 
   Future<void> dispose() async {
-    await _music.dispose();
-    for (final p in _pool) {
-      await p.dispose();
-    }
+    _disposed = true;
+    _musicGen++;
+    try {
+      await _music.dispose();
+      for (final p in _pool) {
+        await p.dispose();
+      }
+    } catch (_) {}
   }
 }

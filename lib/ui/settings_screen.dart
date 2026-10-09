@@ -13,12 +13,14 @@ class SettingsScreen extends StatelessWidget {
   final ClubSettings settings;
   final ClubAudio audio;
   final VoidCallback onBack;
+  final VoidCallback onThemes;
 
   const SettingsScreen({
     super.key,
     required this.settings,
     required this.audio,
     required this.onBack,
+    required this.onThemes,
   });
 
   @override
@@ -118,6 +120,63 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 16),
+                    _SectionTitle('PILOT NAMES'),
+                    RallyCard(
+                      child: Column(
+                        children: [
+                          for (final entry in const [
+                            ('SOLO — BLACK PILOT', 'soloHuman'),
+                            ('SOLO — AUTOMATON', 'soloAi'),
+                            ('DUEL — BLACK', 'duoBlack'),
+                            ('DUEL — WHITE', 'duoWhite'),
+                            ('BLITZ — BLACK PILOT', 'blitzBlack'),
+                            ('BLITZ — WHITE PILOT', 'blitzWhite'),
+                          ])
+                            _NameRow(
+                              label: entry.$1,
+                              slot: entry.$2,
+                              settings: settings,
+                              audio: audio,
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _SectionTitle('TABLE & DISCS'),
+                    RallyCard(
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text('DRESS THE CLUB',
+                                        style: Club.label(13,
+                                            spacing: 1.8)),
+                                    Text(
+                                        '${settings.theme.name} · ${settings.discStyle.name}',
+                                        style: Club.bodyText(11,
+                                            color: Club.darkTeak.withValues(
+                                                alpha: 0.6))),
+                                  ],
+                                ),
+                              ),
+                              BrassIconButton(
+                                icon: Icons.palette,
+                                onTap: () {
+                                  audio.play(ClubSound.click);
+                                  onThemes();
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
                     _SectionTitle('RACE RULES & CHRONO INTERVALS'),
                     RallyCard(
                       child: Column(
@@ -142,6 +201,15 @@ class SettingsScreen extends StatelessWidget {
                             'Run dry on your chrono and you lose on time — regardless of the board.',
                             style: Club.bodyText(11,
                                 color: Club.darkTeak.withValues(alpha: 0.6)),
+                          ),
+                          const _Divider(),
+                          _ToggleRow(
+                            label: 'BLITZ VS AUTOMATON',
+                            sub: 'Blitz duels pit you against the automaton',
+                            value: settings.blitzVsAi,
+                            onChanged: (v) {
+                              settings.setBlitzVsAi(v);
+                            },
                           ),
                         ],
                       ),
@@ -260,6 +328,85 @@ class _Divider extends StatelessWidget {
       height: 1,
       margin: const EdgeInsets.symmetric(vertical: 4),
       color: Club.hairline,
+    );
+  }
+}
+
+class _NameRow extends StatelessWidget {
+  final String label;
+  final String slot;
+  final ClubSettings settings;
+  final ClubAudio audio;
+
+  const _NameRow({
+    required this.label,
+    required this.slot,
+    required this.settings,
+    required this.audio,
+  });
+
+  Future<void> _edit(BuildContext context) async {
+    final text = TextEditingController(text: settings.pilotName(slot));
+    final next = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Club.cream,
+        title: Text('RENAME PILOT',
+            style: Club.label(14, color: Club.darkTeak, spacing: 2.4)),
+        content: TextField(
+          controller: text,
+          autofocus: true,
+          maxLength: 16,
+          style: Club.bodyText(16),
+          decoration: const InputDecoration(
+            hintText: 'Pilot name',
+            counterText: '',
+          ),
+          onSubmitted: (_) => Navigator.of(ctx).pop(text.text),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('CANCEL',
+                style: Club.label(12, color: Club.darkTeak)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(text.text),
+            child:
+                Text('SAVE', style: Club.label(12, color: Club.brassDeep)),
+          ),
+        ],
+      ),
+    );
+    if (next != null) {
+      settings.setPilotName(slot, next);
+      audio.play(ClubSound.click);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: Club.label(11, spacing: 1.8)),
+                Text(settings.pilotName(slot),
+                    style: Club.bodyText(14, color: Club.brassDeep)),
+              ],
+            ),
+          ),
+          BrassIconButton(
+            icon: Icons.edit,
+            size: 38,
+            onTap: () => _edit(context),
+          ),
+        ],
+      ),
     );
   }
 }

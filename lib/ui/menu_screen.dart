@@ -2,158 +2,277 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../audio/club_audio.dart';
 import '../engine/reversi.dart';
+import '../services/iap_service.dart';
 import '../state/club_state.dart';
 import '../theme/club_theme.dart';
 import 'widgets/board.dart';
 import 'widgets/brass_widgets.dart';
 
-/// Main menu: stopwatch motif, board vignette, difficulty selector,
-/// PLAY VS AI / TWO PLAYERS / BLITZ MODE brass buttons.
+/// Main menu: club logo, board vignette, difficulty selector,
+/// PLAY VS AI / TWO PLAYERS / BLITZ MODE brass buttons, table & Pro entries.
 class MenuScreen extends StatelessWidget {
   final ClubSettings settings;
+  final ClubAudio audio;
+  final StoreService store;
   final VoidCallback onPlayVsAi;
   final VoidCallback onTwoPlayers;
-  final VoidCallback onBlitz;
+  final void Function({required bool vsAi}) onBlitz;
   final VoidCallback onSettings;
   final VoidCallback onRecords;
+  final VoidCallback onThemes;
+  final VoidCallback onPro;
 
   const MenuScreen({
     super.key,
     required this.settings,
+    required this.audio,
+    required this.store,
     required this.onPlayVsAi,
     required this.onTwoPlayers,
     required this.onBlitz,
     required this.onSettings,
     required this.onRecords,
+    required this.onThemes,
+    required this.onPro,
   });
+
+  void _blitzSheet(BuildContext context) {
+    audio.play(ClubSound.click);
+    var vsAi = settings.blitzVsAi;
+    var minutes = settings.blitzMinutes;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Club.cream,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                  child: Text('BLITZ DUEL SETUP',
+                      style: Club.label(15, spacing: 2.6))),
+              const SizedBox(height: 14),
+              Text('OPPONENT',
+                  style: Club.label(11,
+                      color: Club.darkTeak.withValues(alpha: 0.65),
+                      spacing: 2.0)),
+              const SizedBox(height: 8),
+              Segmented(
+                options: const ['TWO PILOTS', 'VS AUTOMATON'],
+                selected: vsAi ? 1 : 0,
+                onSelect: (i) => setSheet(() => vsAi = i == 1),
+              ),
+              const SizedBox(height: 12),
+              Text('CHRONO PER PILOT',
+                  style: Club.label(11,
+                      color: Club.darkTeak.withValues(alpha: 0.65),
+                      spacing: 2.0)),
+              const SizedBox(height: 8),
+              Segmented(
+                options: const ['5 MIN', '10 MIN', '15 MIN'],
+                selected: [5, 10, 15].indexOf(minutes).clamp(0, 2),
+                onSelect: (i) =>
+                    setSheet(() => minutes = [5, 10, 15][i]),
+              ),
+              if (vsAi) ...[
+                const SizedBox(height: 12),
+                Text('AUTOMATON CALIBRE',
+                    style: Club.label(11,
+                        color: Club.darkTeak.withValues(alpha: 0.65),
+                        spacing: 2.0)),
+                const SizedBox(height: 8),
+                Segmented(
+                  options: AiLevel.values.map((e) => e.label).toList(),
+                  selected: settings.aiLevel.index,
+                  onSelect: (i) => settings.setAiLevel(AiLevel.values[i]),
+                ),
+              ],
+              const SizedBox(height: 16),
+              BrassButton(
+                label: 'START BLITZ DUEL',
+                primary: true,
+                danger: true,
+                onTap: () {
+                  settings.setBlitzVsAi(vsAi);
+                  settings.setBlitzMinutes(minutes);
+                  Navigator.of(ctx).pop();
+                  onBlitz(vsAi: vsAi);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final engine = ReversiEngine()..reset();
+    final theme = settings.theme;
+    final disc = settings.discStyle;
     return ListenableBuilder(
       listenable: settings,
       builder: (_, _) => Scaffold(
-      backgroundColor: Club.cream,
-      body: Column(
-        children: [
-          ClubHeader(
-            title: 'REVERSI RUSH',
-            sub: 'MID-CENTURY SPEED CLUB · EST. 1964',
-            trailing: BrassIconButton(
-              icon: Icons.settings,
-              onTap: onSettings,
+        backgroundColor: Club.cream,
+        body: Column(
+          children: [
+            ClubHeader(
+              title: 'REVERSI RUSH',
+              sub: 'MID-CENTURY SPEED CLUB · EST. 1964',
+              trailing: BrassIconButton(
+                icon: Icons.settings,
+                onTap: onSettings,
+              ),
             ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const StopwatchMotif(size: 92),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('THE GENTLEMAN\'S\nSPEED DUEL',
-                                style: Club.hDisplay(22)),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Outflank. Flip. Beat the clock. Sixty-four squares of teak and brass.',
-                              style: Club.bodyText(12,
-                                  color: Club.darkTeak.withValues(alpha: 0.7)),
-                            ),
-                          ],
-                        ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                child: Column(
+                  children: [
+                    // Club logo.
+                    Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: Club.brass, width: 2.5),
+                        boxShadow: Club.contactShadow(blur: 14, dy: 7),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  // Board vignette.
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Club.walnut,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Club.brassDeep, width: 2),
+                      clipBehavior: Clip.antiAlias,
+                      child: Image.asset('assets/reversirush_logo.png',
+                          fit: BoxFit.cover),
                     ),
-                    child: ClubBoard(
-                      cells: engine.b,
-                      legal: const {},
-                      showHints: false,
-                      interactive: false,
+                    const SizedBox(height: 10),
+                    Text('THE GENTLEMAN\'S SPEED DUEL',
+                        style: Club.hDisplay(22)),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Outflank. Flip. Beat the clock. Sixty-four squares of teak and brass.',
+                      textAlign: TextAlign.center,
+                      style: Club.bodyText(12,
+                          color: Club.darkTeak.withValues(alpha: 0.7)),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  // Difficulty selector.
-                  RallyCard(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 10),
-                    child: Column(
+                    const SizedBox(height: 14),
+                    // Board vignette in the current table theme.
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Club.walnut,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Club.brassDeep, width: 2),
+                      ),
+                      child: ClubBoard(
+                        cells: engine.b,
+                        legal: const {},
+                        showHints: false,
+                        interactive: false,
+                        theme: theme,
+                        disc: disc,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // Difficulty selector.
+                    RallyCard(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 10),
+                      child: Column(
+                        children: [
+                          Text('AUTOMATON CALIBRE',
+                              style: Club.label(11,
+                                  color: Club.darkTeak.withValues(alpha: 0.7))),
+                          const SizedBox(height: 8),
+                          Segmented(
+                            options:
+                                AiLevel.values.map((e) => e.label).toList(),
+                            selected: settings.aiLevel.index,
+                            onSelect: (i) {
+                              settings.setAiLevel(AiLevel.values[i]);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    BrassButton(
+                      label: 'PLAY VS AI',
+                      sublabel:
+                          'Solo duel against the ${settings.aiLevel.label} automaton',
+                      primary: true,
+                      onTap: onPlayVsAi,
+                      leading: const Icon(Icons.smart_toy,
+                          color: Club.brassHi, size: 24),
+                    ),
+                    const SizedBox(height: 10),
+                    BrassButton(
+                      label: 'TWO PLAYERS',
+                      sublabel: 'Pass-and-play duel on this device',
+                      onTap: onTwoPlayers,
+                      leading: const Icon(Icons.people,
+                          color: Club.darkTeak, size: 24),
+                    ),
+                    const SizedBox(height: 10),
+                    BrassButton(
+                      label: 'BLITZ MODE',
+                      sublabel:
+                          'Rapid chrono duel · ${settings.blitzMinutes}:00 per pilot',
+                      danger: true,
+                      onTap: () => _blitzSheet(context),
+                      leading: const Icon(Icons.timer,
+                          color: Club.cream, size: 24),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
                       children: [
-                        Text('AUTOMATON CALIBRE',
-                            style: Club.label(11,
-                                color: Club.darkTeak.withValues(alpha: 0.7))),
-                        const SizedBox(height: 8),
-                        Segmented(
-                          options:
-                              AiLevel.values.map((e) => e.label).toList(),
-                          selected: settings.aiLevel.index,
-                          onSelect: (i) {
-                            settings.setAiLevel(AiLevel.values[i]);
-                          },
+                        Expanded(
+                          child: BrassButton(
+                            label: 'TABLE & DISCS',
+                            onTap: onThemes,
+                            leading: const Icon(Icons.palette,
+                                color: Club.darkTeak, size: 20),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: store.proPurchased,
+                            builder: (_, owned, _) => BrassButton(
+                              label: owned ? 'PRO MEMBER' : 'GO PRO',
+                              onTap: onPro,
+                              leading: Icon(Icons.emoji_events,
+                                  color: owned
+                                      ? Club.brassDeep
+                                      : Club.darkTeak,
+                                  size: 20),
+                            ),
+                          ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  BrassButton(
-                    label: 'PLAY VS AI',
-                    sublabel:
-                        'Solo duel against the ${settings.aiLevel.label} automaton',
-                    primary: true,
-                    onTap: onPlayVsAi,
-                    leading: const Icon(Icons.smart_toy,
-                        color: Club.brassHi, size: 24),
-                  ),
-                  const SizedBox(height: 10),
-                  BrassButton(
-                    label: 'TWO PLAYERS',
-                    sublabel: 'Pass-and-play duel on this device',
-                    onTap: onTwoPlayers,
-                    leading: const Icon(Icons.people,
-                        color: Club.darkTeak, size: 24),
-                  ),
-                  const SizedBox(height: 10),
-                  BrassButton(
-                    label: 'BLITZ MODE',
-                    sublabel:
-                        'Rapid chrono duel · ${settings.blitzMinutes}:00 per pilot',
-                    danger: true,
-                    onTap: onBlitz,
-                    leading: const Icon(Icons.timer,
-                        color: Club.cream, size: 24),
-                  ),
-                  const SizedBox(height: 8),
-                  Text('Official rules (1964) apply at every table.',
-                      style: Club.bodyText(11,
-                          color: Club.darkTeak.withValues(alpha: 0.55))),
-                ],
+                    const SizedBox(height: 8),
+                    Text('Official rules (1964) apply at every table.',
+                        style: Club.bodyText(11,
+                            color: Club.darkTeak.withValues(alpha: 0.55))),
+                  ],
+                ),
               ),
             ),
-          ),
-          _BottomNav(
-            current: 0,
-            onLobby: () {},
-            onRecords: onRecords,
-            onSettings: onSettings,
-          ),
-        ],
+            _BottomNav(
+              current: 0,
+              onLobby: () {},
+              onRecords: onRecords,
+              onSettings: onSettings,
+            ),
+          ],
+        ),
       ),
-    ),
     );
   }
 }
@@ -209,7 +328,6 @@ class Segmented extends StatelessWidget {
     );
   }
 }
-
 
 class StopwatchMotif extends StatelessWidget {
   final double size;

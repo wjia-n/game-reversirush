@@ -92,9 +92,7 @@ class GameOverScreen extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             _Tally(
-                                label: c.mode == PlayMode.twoPlayer
-                                    ? 'NOIR'
-                                    : 'NOIR (YOU)',
+                                label: c.playerName(1).toUpperCase(),
                                 value: b,
                                 black: true),
                             Padding(
@@ -105,9 +103,7 @@ class GameOverScreen extends StatelessWidget {
                                       color: Club.brassDeep)),
                             ),
                             _Tally(
-                                label: c.mode == PlayMode.twoPlayer
-                                    ? 'BLANC'
-                                    : 'BLANC (AUTO)',
+                                label: c.playerName(2).toUpperCase(),
                                 value: w,
                                 black: false),
                           ],

@@ -49,6 +49,32 @@ class ReversiEngine {
   /// Public bracket lookup used by the AI search (same rules as [_flipsFor]).
   List<int> flipsFor(int i, int color) => _flipsFor(i, color);
 
+  /// Per-direction bracketed lines for a placement at [i] by [color].
+  /// Each inner list is one direction's discs, ordered from the placed disc
+  /// outward. The union equals [flipsFor]; the grouping drives the staged
+  /// flip-cascade animation (one direction wave at a time). RULES.md §6:
+  /// every outflanked line flips, in all 8 directions at once.
+  List<List<int>> flipLines(int i, int color) {
+    if (b[i] != 0) return [];
+    final r = i ~/ 8, c = i % 8, foe = 3 - color;
+    final out = <List<int>>[];
+    for (final d in dirs) {
+      final line = <int>[];
+      int nr = r + d[0], nc = c + d[1];
+      while (_at(nr, nc) == foe) {
+        line.add(nr * 8 + nc);
+        nr += d[0];
+        nc += d[1];
+      }
+      if (line.isNotEmpty && _at(nr, nc) == color) out.add(line);
+    }
+    return out;
+  }
+
+  /// Algebraic square name for narration (0 -> 'a1', 63 -> 'h8').
+  static String squareName(int i) =>
+      '${String.fromCharCode(97 + (i % 8))}${i ~/ 8 + 1}';
+
   List<int> legalMoves([int? color]) {
     color ??= turn;
     final m = <int>[];

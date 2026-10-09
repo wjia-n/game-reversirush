@@ -3,15 +3,20 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../../theme/club_theme.dart';
+import '../../theme/rush_themes.dart';
 
-/// The club board: oiled teak veneer, brass inlay grid, hand-poured enamel
-/// discs with 1px brass rims. Light from top-left at 45°.
+/// The club board: themed wood veneer, brass inlay grid, enamel discs with
+/// brass rims. Light from top-left at 45°.
+///
+/// Flip cascades animate in visible direction waves: [visibleFlipped] grows
+/// one direction at a time while the engine settles the move — nothing
+/// resolves instantly or silently.
 class ClubBoard extends StatefulWidget {
   final List<int> cells; // 64: 0 empty, 1 black, 2 white
   final Set<int> legal;
   final bool showHints;
   final int? justPlaced;
-  final Set<int> justFlipped;
+  final Set<int> visibleFlipped;
   final int animGen;
   final int hintPulseIndex;
   final int hintPulseGen;
@@ -19,6 +24,8 @@ class ClubBoard extends StatefulWidget {
   final int shakeGen;
   final bool interactive;
   final void Function(int index)? onTap;
+  final RushTheme theme;
+  final DiscStyle disc;
 
   const ClubBoard({
     super.key,
@@ -26,7 +33,7 @@ class ClubBoard extends StatefulWidget {
     required this.legal,
     this.showHints = true,
     this.justPlaced,
-    this.justFlipped = const {},
+    this.visibleFlipped = const {},
     this.animGen = 0,
     this.hintPulseIndex = -1,
     this.hintPulseGen = 0,
@@ -34,6 +41,8 @@ class ClubBoard extends StatefulWidget {
     this.shakeGen = 0,
     this.interactive = true,
     this.onTap,
+    this.theme = RushThemes.teakClassic,
+    this.disc = DiscStyles.enamel,
   });
 
   @override
@@ -95,7 +104,7 @@ class _ClubBoardState extends State<ClubBoard> with TickerProviderStateMixin {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Club.brass, width: 3),
+          border: Border.all(color: widget.theme.frame, width: 3),
           boxShadow: const [
             BoxShadow(
                 color: Color(0x77000000), blurRadius: 18, offset: Offset(0, 8)),
@@ -126,12 +135,15 @@ class _ClubBoardState extends State<ClubBoard> with TickerProviderStateMixin {
                   legal: widget.legal,
                   showHints: widget.showHints,
                   justPlaced: widget.justPlaced,
-                  justFlipped: widget.justFlipped,
+                  visibleFlipped: widget.visibleFlipped,
                   flipT: _flip.value,
                   hintPulseIndex: widget.hintPulseIndex,
                   hintT: _pulse.value,
                   shakeIndex: widget.shakeIndex,
+                  shakeGen: _seenShake,
                   shakeT: _shake.value,
+                  theme: widget.theme,
+                  disc: widget.disc,
                 ),
               ),
             ),
@@ -147,24 +159,30 @@ class _BoardPainter extends CustomPainter {
   final Set<int> legal;
   final bool showHints;
   final int? justPlaced;
-  final Set<int> justFlipped;
+  final Set<int> visibleFlipped;
   final double flipT;
   final int hintPulseIndex;
   final double hintT;
   final int shakeIndex;
+  final int shakeGen;
   final double shakeT;
+  final RushTheme theme;
+  final DiscStyle disc;
 
   _BoardPainter({
     required this.cells,
     required this.legal,
     required this.showHints,
     required this.justPlaced,
-    required this.justFlipped,
+    required this.visibleFlipped,
     required this.flipT,
     required this.hintPulseIndex,
     required this.hintT,
     required this.shakeIndex,
+    required this.shakeGen,
     required this.shakeT,
+    required this.theme,
+    required this.disc,
   });
 
   @override
@@ -172,13 +190,13 @@ class _BoardPainter extends CustomPainter {
     final w = size.width, h = size.height;
     final cell = w / 8;
 
-    // Teak veneer field.
-    final bg = Paint()..color = Club.teak;
+    // Themed veneer field.
+    final bg = Paint()..color = theme.field;
     canvas.drawRect(Rect.fromLTWH(0, 0, w, h), bg);
 
     // Subtle wood grain streaks.
     final grain = Paint()
-      ..color = const Color(0x14000000)
+      ..color = theme.grain
       ..strokeWidth = 1.5;
     final grng = Random(7);
     for (var k = 0; k < 26; k++) {
@@ -198,18 +216,18 @@ class _BoardPainter extends CustomPainter {
           ..color = const Color(0x22FFFFFF)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6));
 
-    // Alternating teak cells + brass inlay grid.
+    // Alternating cell wash + inlay grid.
     for (var r = 0; r < 8; r++) {
       for (var c = 0; c < 8; c++) {
         if ((r + c).isEven) {
           canvas.drawRect(
               Rect.fromLTWH(c * cell, r * cell, cell, cell),
-              Paint()..color = const Color(0x0DFFFFFF));
+              Paint()..color = theme.fieldAlt);
         }
       }
     }
     final grid = Paint()
-      ..color = Club.brass.withValues(alpha: 0.55)
+      ..color = theme.grid.withValues(alpha: 0.55)
       ..strokeWidth = 1.5;
     for (var k = 1; k < 8; k++) {
       canvas.drawLine(Offset(k * cell, 0), Offset(k * cell, h), grid);
@@ -221,7 +239,7 @@ class _BoardPainter extends CustomPainter {
       fontFamily: Club.condensed,
       fontWeight: FontWeight.w600,
       fontSize: cell * 0.22,
-      color: Club.brassHi.withValues(alpha: 0.8),
+      color: theme.hint.withValues(alpha: 0.8),
       letterSpacing: 1,
     );
     for (var c = 0; c < 8; c++) {
@@ -233,13 +251,13 @@ class _BoardPainter extends CustomPainter {
           labelStyle);
     }
 
-    // Hint dots: faint translucent brass watermark rings — never digital glow.
+    // Hint dots: faint translucent watermark rings — never digital glow.
     if (showHints) {
       final hint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2
-        ..color = Club.brass.withValues(alpha: 0.45);
-      final dot = Paint()..color = Club.brass.withValues(alpha: 0.30);
+        ..color = theme.hint.withValues(alpha: 0.45);
+      final dot = Paint()..color = theme.hint.withValues(alpha: 0.30);
       for (final i in legal) {
         final cx = (i % 8) * cell + cell / 2;
         final cy = (i ~/ 8) * cell + cell / 2;
@@ -259,7 +277,7 @@ class _BoardPainter extends CustomPainter {
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 3
-            ..color = Club.brassHi.withValues(alpha: 0.9 * (1 - hintT)));
+            ..color = theme.hint.withValues(alpha: 0.9 * (1 - hintT)));
     }
 
     // Discs.
@@ -282,7 +300,7 @@ class _BoardPainter extends CustomPainter {
         scaleX = scaleY = s;
         lift = (1 - t) * R * 1.6;
         cy -= lift;
-      } else if (justFlipped.contains(i)) {
+      } else if (visibleFlipped.contains(i)) {
         // Flip: lift, widen blur, +4% scale, swap face at midpoint.
         final t = flipT.clamp(0.0, 1.0);
         scaleX = cos(t * pi).abs().clamp(0.08, 1.0);
@@ -325,16 +343,17 @@ class _BoardPainter extends CustomPainter {
     canvas.scale(sx, sy);
 
     final dark = color == 1;
-    final base = dark ? const Color(0xFF1E1E1E) : Club.ivory;
-    final edge = dark ? const Color(0xFF0C0C0C) : const Color(0xFFE4DCC8);
+    final base = dark ? disc.blackFace : disc.whiteFace;
+    final edge = dark ? disc.blackEdge : disc.whiteEdge;
+    final specColor = dark ? disc.blackSpec : disc.whiteSpec;
 
-    // Enamel body with top-left light response.
+    // Disc body with top-left light response.
     final body = Paint()
       ..shader = RadialGradient(
         center: const Alignment(-0.35, -0.4),
         radius: 1.1,
         colors: [
-          dark ? const Color(0xFF3A3A3A) : const Color(0xFFFFFFFF),
+          Color.lerp(base, Colors.white, dark ? 0.25 : 0.6)!,
           base,
           edge,
         ],
@@ -342,22 +361,21 @@ class _BoardPainter extends CustomPainter {
       ).createShader(Rect.fromCircle(center: Offset.zero, radius: r));
     canvas.drawCircle(Offset.zero, r, body);
 
-    // 1px brass edge rim.
+    // Rim.
     canvas.drawCircle(
         Offset.zero,
         r - 0.75,
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
-          ..color = Club.brass);
+          ..color = disc.rim);
 
-    // Enamel specular: soft top-left crescent.
+    // Specular: soft top-left crescent.
     final spec = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
       ..strokeWidth = r * 0.16
-      ..color = (dark ? Colors.white : const Color(0xFFFFF6E0))
-          .withValues(alpha: dark ? 0.28 : 0.55)
+      ..color = specColor.withValues(alpha: dark ? 0.28 : 0.55)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
     canvas.drawArc(
         Rect.fromCircle(center: const Offset(-0.08, -0.1), radius: r * 0.62),

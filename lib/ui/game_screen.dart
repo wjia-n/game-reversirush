@@ -4,12 +4,14 @@ import '../audio/club_audio.dart';
 import '../engine/reversi.dart';
 import '../state/club_state.dart';
 import '../theme/club_theme.dart';
+import '../theme/rush_themes.dart';
 import 'widgets/board.dart';
 import 'widgets/brass_widgets.dart';
 import 'widgets/dial.dart';
 
-/// Gameplay: teak board, score tally cards, stopwatch chip, YOUR TURN ribbon,
-/// UNDO / HINT / pause bottom bar, pause & ready overlays.
+/// Gameplay: pilot trays per side (name, discs, chrono, thinking state),
+/// narration ribbon, themed board with staged flip cascades,
+/// UNDO / HINT / pause bottom bar, pause & readiness overlays.
 class GameScreen extends StatelessWidget {
   final ClubController controller;
   final VoidCallback onQuitToMenu;
@@ -37,6 +39,48 @@ class GameScreen extends StatelessWidget {
     return '${m.toString().padLeft(2, '0')}:${r.toString().padLeft(2, '0')}.$d';
   }
 
+  Future<void> _renamePilot(BuildContext context, int color) async {
+    final c = controller;
+    final slot = c.nameSlots[color - 1];
+    final current = c.playerName(color);
+    final text = TextEditingController(text: current);
+    final next = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Club.cream,
+        title: Text('RENAME PILOT',
+            style: Club.label(14, color: Club.darkTeak, spacing: 2.4)),
+        content: TextField(
+          controller: text,
+          autofocus: true,
+          maxLength: 16,
+          style: Club.bodyText(16),
+          decoration: const InputDecoration(
+            hintText: 'Pilot name',
+            counterText: '',
+          ),
+          onSubmitted: (_) => Navigator.of(ctx).pop(text.text),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('CANCEL',
+                style: Club.label(12, color: Club.darkTeak)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(text.text),
+            child:
+                Text('SAVE', style: Club.label(12, color: Club.brassDeep)),
+          ),
+        ],
+      ),
+    );
+    if (next != null) {
+      c.settings.setPilotName(slot, next);
+      c.audio.play(ClubSound.click);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -49,6 +93,8 @@ class GameScreen extends StatelessWidget {
         final aiThinking = c.aiThinking;
         final humanTurn =
             c.mode == PlayMode.twoPlayer || c.engine.turn == c.humanColor;
+        final theme = c.settings.theme;
+        final disc = c.settings.discStyle;
 
         final String chipText;
         final bool urgent;
@@ -63,14 +109,6 @@ class GameScreen extends StatelessWidget {
           urgent = false;
           caption = 'ELAPSED';
         }
-
-        final ribbonText = c.over
-            ? 'DUEL COMPLETE'
-            : aiThinking
-                ? 'AUTOMATON THINKING…'
-                : turnBlack
-                    ? '${c.playerName(1)} — PLACE BLACK DISC'
-                    : '${c.playerName(2)} — PLACE WHITE DISC';
 
         return Scaffold(
           backgroundColor: Club.cream,
@@ -106,7 +144,7 @@ class GameScreen extends StatelessWidget {
                                           color: Club.cream, spacing: 2.6)),
                                   Text(
                                       c.mode == PlayMode.blitz
-                                          ? 'BLITZ · ${c.settings.blitzMinutes}:00 PER PILOT'
+                                          ? 'BLITZ · ${c.clockTotal ~/ 60}:00 PER PILOT'
                                           : c.mode == PlayMode.vsAi
                                               ? 'SOLO · ${c.aiLevel.label} AUTOMATON'
                                               : 'PASS-AND-PLAY DUEL',
@@ -130,17 +168,25 @@ class GameScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  // Score tally + stopwatch.
+                  // Per-side pilot trays.
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Row(
                       children: [
-                        ScoreCard(
-                          name: c.playerName(1),
-                          discs: bCount,
-                          color: 1,
-                          active: turnBlack && !c.over,
-                          sub: c.isBlitz ? _fmtClock(c.blackClock) : null,
+                        Expanded(
+                          child: _PilotTray(
+                            color: 1,
+                            name: c.playerName(1),
+                            discs: bCount,
+                            clock: c.isBlitz ? _fmtClock(c.blackClock) : null,
+                            clockUrgent: c.isBlitz &&
+                                turnBlack &&
+                                c.blackClock <= 10.5,
+                            active: turnBlack && !c.over,
+                            thinking: aiThinking && !turnBlack,
+                            disc: disc,
+                            onRename: () => _renamePilot(context, 1),
+                          ),
                         ),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -149,19 +195,34 @@ class GameScreen extends StatelessWidget {
                               urgent: urgent,
                               caption: caption),
                         ),
-                        ScoreCard(
-                          name: c.playerName(2),
-                          discs: wCount,
-                          color: 2,
-                          active: !turnBlack && !c.over,
-                          sub: c.isBlitz ? _fmtClock(c.whiteClock) : null,
+                        Expanded(
+                          child: _PilotTray(
+                            color: 2,
+                            name: c.playerName(2),
+                            discs: wCount,
+                            clock: c.isBlitz ? _fmtClock(c.whiteClock) : null,
+                            clockUrgent: c.isBlitz &&
+                                !turnBlack &&
+                                c.whiteClock <= 10.5,
+                            active: !turnBlack && !c.over,
+                            thinking: aiThinking && !turnBlack,
+                            disc: disc,
+                            onRename: () => _renamePilot(context, 2),
+                          ),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 8),
+                  // Narration ribbon: every turn is announced.
                   ClubRibbon(
-                    text: ribbonText,
+                    text: c.over
+                        ? 'DUEL COMPLETE'
+                        : c.narration.isEmpty
+                            ? (turnBlack
+                                ? '${c.playerName(1)} — PLACE BLACK DISC'
+                                : '${c.playerName(2)} — PLACE WHITE DISC')
+                            : c.narration,
                     color: aiThinking
                         ? Club.brassDeep
                         : (turnBlack ? Club.teak : Club.darkTeak),
@@ -185,7 +246,7 @@ class GameScreen extends StatelessWidget {
                             legal: c.legal,
                             showHints: c.settings.hintsOn,
                             justPlaced: c.justPlaced,
-                            justFlipped: c.justFlipped,
+                            visibleFlipped: c.visibleFlipped,
                             animGen: c.animGen,
                             hintPulseIndex: c.hintPulseIndex,
                             hintPulseGen: c.hintPulseGen,
@@ -193,6 +254,8 @@ class GameScreen extends StatelessWidget {
                             shakeGen: c.shakeGen,
                             interactive: !c.over && humanTurn && !aiThinking,
                             onTap: c.tapCell,
+                            theme: theme,
+                            disc: disc,
                           ),
                         ),
                       ),
@@ -216,7 +279,8 @@ class GameScreen extends StatelessWidget {
                                   !c.paused &&
                                   !c.aiThinking &&
                                   humanTurn &&
-                                  c.legal.isNotEmpty)
+                                  c.legal.isNotEmpty &&
+                                  c.phase == TurnPhase.awaitingMove)
                               ? c.hint
                               : null),
                       BarButton(
@@ -239,13 +303,125 @@ class GameScreen extends StatelessWidget {
               // Pause overlay (not during the blitz readiness gate).
               if (c.paused && !c.over && !(c.isBlitz && c.movesMade == 0))
                 _PauseOverlay(controller: c, onQuit: onQuitToMenu),
-              // Blitz readiness overlay.
+              // Blitz readiness overlay: each pilot confirms.
               if (c.isBlitz && c.paused && !c.over && c.movesMade == 0)
                 _ReadyOverlay(controller: c),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+/// One pilot's tray: renameable name, disc count, chrono, active highlight,
+/// and a visible thinking spinner on the automaton's side.
+class _PilotTray extends StatelessWidget {
+  final int color; // 1 black, 2 white
+  final String name;
+  final int discs;
+  final String? clock;
+  final bool clockUrgent;
+  final bool active;
+  final bool thinking;
+  final DiscStyle disc;
+  final VoidCallback onRename;
+
+  const _PilotTray({
+    required this.color,
+    required this.name,
+    required this.discs,
+    required this.clock,
+    required this.clockUrgent,
+    required this.active,
+    required this.thinking,
+    required this.disc,
+    required this.onRename,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final face = color == 1 ? disc.blackFace : disc.whiteFace;
+    return GestureDetector(
+      onTap: onRename,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? Club.cream : Club.cardstock,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: active ? Club.crimson : Club.brass,
+              width: active ? 2.5 : 1.5),
+          boxShadow: active ? Club.contactShadow(blur: 8, dy: 4) : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: face,
+                    border: Border.all(color: disc.rim, width: 1.5),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    name.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Club.label(12,
+                        color: active ? Club.crimson : Club.darkTeak,
+                        spacing: 1.6),
+                  ),
+                ),
+                if (thinking)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Club.brassDeep),
+                  )
+                else
+                  const Icon(Icons.edit, size: 13, color: Club.brassDeep),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text('$discs',
+                    style: Club.numeral(22,
+                        color: active ? Club.crimson : Club.darkTeak)),
+                const SizedBox(width: 4),
+                Text('DISCS',
+                    style: Club.label(9,
+                        color: Club.darkTeak.withValues(alpha: 0.6),
+                        spacing: 1.4)),
+                if (clock != null) ...[
+                  const Spacer(),
+                  Text(clock!,
+                      style: Club.numeral(15,
+                          color: clockUrgent
+                              ? Club.crimson
+                              : Club.darkTeak)),
+                ],
+              ],
+            ),
+            if (thinking)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text('THINKING…',
+                    style: Club.label(9,
+                        color: Club.brassDeep, spacing: 2.0)),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -301,6 +477,7 @@ class _ReadyOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = controller;
     return Container(
       color: const Color(0xAA2A1D12),
       child: Center(
@@ -313,17 +490,27 @@ class _ReadyOverlay extends StatelessWidget {
                 Text('BLITZ DUEL', style: Club.hDisplay(28)),
                 const SizedBox(height: 6),
                 Text(
-                  'Both pilots get ${controller.settings.blitzMinutes}:00 on their chrono. '
+                  'Both pilots get ${c.clockTotal ~/ 60}:00 on their chrono. '
                   'Your clock runs only on your turn — run dry and you lose on time. '
-                  'Black moves first.',
+                  'Black moves first. Each pilot taps ready below.',
                   textAlign: TextAlign.center,
                   style: Club.bodyText(13),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 16),
                 BrassButton(
-                  label: 'START ENGINES',
-                  primary: true,
-                  onTap: controller.ready,
+                  label: c.readyBlack
+                      ? '✓ ${c.playerName(1)} READY'
+                      : '${c.playerName(1)} — TAP WHEN READY',
+                  primary: !c.readyBlack,
+                  onTap: c.readyBlack ? null : () => c.ready(1),
+                ),
+                const SizedBox(height: 10),
+                BrassButton(
+                  label: c.readyWhite
+                      ? '✓ ${c.playerName(2)} READY'
+                      : '${c.playerName(2)} — TAP WHEN READY',
+                  primary: !c.readyWhite,
+                  onTap: c.readyWhite ? null : () => c.ready(2),
                 ),
               ],
             ),
