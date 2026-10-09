@@ -347,6 +347,10 @@ class _NameRow extends StatelessWidget {
 
   Future<void> _edit(BuildContext context) async {
     final text = TextEditingController(text: settings.pilotName(slot));
+    // Focus-loss commit: tapping outside the dialog (barrier dismiss) saves
+    // whatever was typed; only explicit CANCEL discards. Keyboard-done and
+    // the SAVE button commit as before.
+    var cancelled = false;
     final next = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -366,7 +370,10 @@ class _NameRow extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
+            onPressed: () {
+              cancelled = true;
+              Navigator.of(ctx).pop();
+            },
             child: Text('CANCEL',
                 style: Club.label(12, color: Club.darkTeak)),
           ),
@@ -378,8 +385,8 @@ class _NameRow extends StatelessWidget {
         ],
       ),
     );
-    if (next != null) {
-      settings.setPilotName(slot, next);
+    if (next != null || !cancelled) {
+      settings.setPilotName(slot, next ?? text.text);
       audio.play(ClubSound.click);
     }
   }
