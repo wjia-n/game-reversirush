@@ -1,25 +1,149 @@
 import 'package:flutter/material.dart';
-import 'package:wajiha_game_core/wajiha_game_core.dart';
-import 'game_screen.dart';
+import 'package:flutter/services.dart';
 
-void main() => runApp(const ReversiRushApp());
+import 'audio/club_audio.dart';
+import 'state/club_state.dart';
+import 'theme/club_theme.dart';
+import 'ui/game_over_screen.dart';
+import 'ui/game_screen.dart';
+import 'ui/menu_screen.dart';
+import 'ui/records_screen.dart';
+import 'ui/settings_screen.dart';
 
-class ReversiRushApp extends StatelessWidget {
-  const ReversiRushApp({super.key});
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations(
+      [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+
+  final settings = ClubSettings();
+  await settings.load();
+  final records = ClubRecords();
+  await records.load();
+  final audio = ClubAudio();
+  await audio.init(
+      musicOn: settings.musicOn, sfxOn: settings.sfxOn, volume: settings.volume);
+  await audio.applySettings();
+
+  runApp(ClubApp(settings: settings, records: records, audio: audio));
+}
+
+enum _Screen { menu, game, over, settings, records }
+
+/// Reversi Rush — Mid-Century Speed Club edition.
+class ClubApp extends StatefulWidget {
+  final ClubSettings settings;
+  final ClubRecords records;
+  final ClubAudio audio;
+
+  const ClubApp({
+    super.key,
+    required this.settings,
+    required this.records,
+    required this.audio,
+  });
+
+  @override
+  State<ClubApp> createState() => _ClubAppState();
+}
+
+class _ClubAppState extends State<ClubApp> with WidgetsBindingObserver {
+  _Screen _screen = _Screen.menu;
+  _Screen _returnTo = _Screen.menu;
+  late final ClubController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _controller = ClubController(
+      audio: widget.audio,
+      settings: widget.settings,
+      records: widget.records,
+    );
+    _controller.onGameOver = () {
+      if (mounted) {
+        setState(() => _screen = _Screen.over);
+        widget.audio.startMenuMusic();
+      }
+    };
+    widget.audio.startMenuMusic();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _controller.onBackground();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller.dispose();
+    widget.audio.dispose();
+    super.dispose();
+  }
+
+  void _startGame(PlayMode mode) {
+    widget.audio.play(ClubSound.click);
+    _controller.startGame(
+        mode: mode,
+        aiLevel: widget.settings.aiLevel,
+        blitzMinutes: widget.settings.blitzMinutes);
+    widget.audio.startGameMusic();
+    setState(() => _screen = _Screen.game);
+  }
+
+  void _openSettings() {
+    _returnTo = _screen;
+    setState(() => _screen = _Screen.settings);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return GameShell(
-      variant: ShellVariant.elegantSerif,
+    return MaterialApp(
       title: 'Reversi Rush',
-      tagline: 'Flip discs at lightning speed in this 60-second blitz! ⚫',
-      emoji: '⚫',
-      slug: 'reversirush',
-      howToPlay:
-          '• Black moves first. Tap a glowing dot to place your disc.\n• Outflank rival discs in any direction to flip them to your color!\n• No moves? You pass automatically. The clock never stops!\n• When the 60 seconds die, most discs on the board wins! ⚡',
-      playerOptions: const [1, 2],
-      supportsBots: true,
-      gameBuilder: (ctx, players, cb) => ReversiRushScreen(players: players, callbacks: cb),
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        fontFamily: Club.body,
+        scaffoldBackgroundColor: Club.cream,
+        colorScheme: ColorScheme.fromSeed(seedColor: Club.brass),
+        useMaterial3: true,
+      ),
+      home: switch (_screen) {
+        _Screen.menu => MenuScreen(
+            settings: widget.settings,
+            onPlayVsAi: () => _startGame(PlayMode.vsAi),
+            onTwoPlayers: () => _startGame(PlayMode.twoPlayer),
+            onBlitz: () => _startGame(PlayMode.blitz),
+            onSettings: _openSettings,
+            onRecords: () => setState(() => _screen = _Screen.records),
+          ),
+        _Screen.game => GameScreen(
+            controller: _controller,
+            onQuitToMenu: () {
+              _controller.pause();
+              widget.audio.startMenuMusic();
+              setState(() => _screen = _Screen.menu);
+            },
+            onOpenSettings: _openSettings,
+          ),
+        _Screen.over => GameOverScreen(
+            controller: _controller,
+            onRematch: () => _startGame(_controller.mode),
+            onMenu: () => setState(() => _screen = _Screen.menu),
+          ),
+        _Screen.settings => SettingsScreen(
+            settings: widget.settings,
+            audio: widget.audio,
+            onBack: () => setState(() => _screen = _returnTo),
+          ),
+        _Screen.records => RecordsScreen(
+            records: widget.records,
+            onBack: () => setState(() => _screen = _Screen.menu),
+          ),
+      },
     );
   }
 }
