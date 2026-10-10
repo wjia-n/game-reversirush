@@ -82,12 +82,6 @@ class StoreService {
     }
   }
 
-  Future<void> _persistPro() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kProLocal, true);
-    } catch (_) {}
-  }
 
   void _onPurchases(List<PurchaseDetails> list) {
     for (final p in list) {
