@@ -6,6 +6,7 @@ import '../state/club_state.dart';
 import '../theme/club_theme.dart';
 import 'menu_screen.dart';
 import 'widgets/brass_widgets.dart';
+import '../transfer/transfer_ui.dart';
 
 /// Club preferences: brass header, cream rally-card rows, heavy brass lever
 /// toggles, blitz chrono selector, automaton calibre, machined volume gauge.
@@ -31,6 +32,7 @@ class SettingsScreen extends StatelessWidget {
         backgroundColor: Club.cream,
         body: Column(
           children: [
+              TransferSaveTile(gameSlug: 'reversirush'),
             ClubHeader(
               title: 'CLUB PREFERENCES',
               sub: 'PADDOCK CLUB PREFERENCES',
